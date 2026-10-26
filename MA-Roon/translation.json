@@ -1,0 +1,36 @@
+{
+  "en": {
+    "translation": {
+      "MA-Roon": "MA-Roon",
+      "Music Assistant": "Music Assistant",
+      "Connection Settings": "Connection Settings",
+      "WAN - Remote ID": "WAN - Remote ID",
+      "LAN - Server URL": "LAN - Server URL",
+      "Access Token": "Access Token",
+      "Default Speaker": "Default Speaker",
+      "Built-In PC Player (Sendspin)": "Built-In PC Player (Sendspin)",
+      "Built-In PC Player Name": "Built-In PC Player Name",
+      "Remote ID": "Remote ID",
+      "Local Server URL": "Local Server URL",
+      "Target Speaker": "Target Speaker",
+      "Standby and Theme": "Standby and Theme",
+      "Standby Background": "Standby Background",
+      "Standby Power Button": "Standby Power Button",
+      "Standby Glow Color": "Standby Glow Color",
+      "Show Standby Logo": "Show Standby Logo",
+      "Dynamic Album Art Theme": "Dynamic Album Art Theme",
+      "MilkDrop Visualizer Backdrop": "MilkDrop Visualizer Backdrop",
+      "Widget Personalization": "Widget Personalization",
+      "Controls Color": "Controls Color",
+      "Media Text Color": "Media Text Color",
+      "Menu Text Color": "Menu Text Color",
+      "Text Color": "Text Color",
+      "Accent Color": "Accent Color",
+      "Background Color": "Background Color",
+      "Background Image": "Background Image",
+      "Background Brightness": "Background Brightness",
+      "Glass Blur": "Glass Blur",
+      "Background Transparency": "Background Transparency"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "author": "rxritalin",
+  "id": "com.musicassistant.xeneonplayer",
+  "name": "MA-Roon",
+  "description": "Roon-inspired full-screen Music Assistant controller, MilkDrop visualizer, synchronized lyrics, and built-in Sendspin PC player for Xeneon Edge.",
+  "version": "1.0.0",
+  "preview_icon": "resources/icon.svg",
+  "min_app_version": "5.52",
+  "min_framework_version": "1.9.0",
+  "os": [
+    {
+      "platform": "windows"
+    }
+  ],
+  "supported_devices": [
+    {
+      "type": "dashboard_lcd",
+      "features": ["sensor-screen"]
+    }
+  ],
+  "interactive": true,
+  "permissions": [
+    {
+      "type": "speaker"
+    },
+    {
+      "type": "url",
+      "domain": "music-assistant.io"
+    },
+    {
+      "type": "url",
+      "domain": "localhost",
+      "port": 8095
+    },
+    {
+      "type": "url",
+      "domain": "any"
+    }
+  ]
+}

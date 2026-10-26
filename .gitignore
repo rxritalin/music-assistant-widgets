@@ -1,0 +1,28 @@
+# OS & Editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Node / Python / Build artifacts
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+
+# Local Antigravity MCP plugins & credentials (NEVER commit)
+.agents/plugins/
+**/*mcp_config.json
+
+# Scratch / temporary debug files
+scratch/
+*.log
+tmp_*
+test_*.py
+check_*.py

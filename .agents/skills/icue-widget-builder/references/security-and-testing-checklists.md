@@ -1,0 +1,142 @@
+# Security and Testing Checklists
+
+Use this reference during verification and before final delivery.
+
+## Security Review
+
+### No malicious or harmful code
+
+- Never include code that damages files, processes, or system state
+- Never include cryptocurrency miners, keyloggers, clipboard hijackers, or malware
+- Never obfuscate JavaScript to hide intent
+- Never use `eval()` or `document.write()` with dynamic strings
+- Never use remote `<script src>` tags or remote web fonts
+- Use `Function()` only for the narrowly-scoped compatibility helper described in the lifecycle reference
+
+### Data privacy
+
+- No network requests by default
+- Every external host the widget contacts is declared as a `url` entry in `manifest.json` `permissions` (and disclosed to the user); iCUE blocks undeclared hosts or asks the user at runtime
+- If external requests are required, send only the minimum data needed
+- Never send device identifiers, hardware details, file paths, localStorage contents, or personal data to third parties
+- Use HTTPS only
+- Explain outbound behavior to the user and get approval before testing an API
+
+### Permissions
+
+- the permission audit in `references/permissions.md` was run after the last code change, and its result is reported to the user
+- `permissions` contains only what the code uses — no leftover entries from removed features
+- prefer a specific `domain` (and `port`) over `"any"`; justify `"any"` explicitly (for example user-supplied endpoints)
+- `file` / `folder` paths are as narrow as possible and use `<Macro>` angle-bracket syntax; File System `watchPath()` paths use the same location with `{Macro}` curly braces and fall inside a declared permission
+- `localhost` `url` entries include the required `port`
+- hardware/privacy permissions (`microphone`, `camera`, `screen`, `clipboard_read_write`, `local_fonts_access`, `download`) are used only for a user-visible feature and disclosed
+- plugins that need a permission have it: Stream Deck → `{ "type": "application", "application": "Stream Deck" }`; File System → `file` / `folder`
+- no permission entries invented for plugins that document none (Sensors, Media, Link, FPS, Device Action, Notifications)
+- the user can grant or revoke permissions at any time: every `fetch` / `WebSocket` / file read / hardware call / gated plugin has a failure path that keeps last known data or shows a setup/offline hint, and recovers on its own when access returns
+- the final response lists each permission with scope and reason (or states that none are required)
+
+### API keys and storage
+
+- Never hardcode API keys
+- Use a `textfield` property for user-supplied keys
+- Never store tokens or credentials in `localStorage`
+- Store only widget-display state under the widget's own key
+
+## Browser Testing
+
+Open the HTML file in a browser and test each supported target size.
+
+### Target resolutions
+
+**Xeneon Edge (`dashboard_lcd`)**
+
+| Size | Horizontal | Vertical |
+|------|-----------|----------|
+| Small | 840x344 | 696x416 |
+| Medium | 840x696 | 696x840 |
+| Large | 1688x696 | 696x1688 |
+| Extra Large | 2536x696 | 696x2536 |
+
+**Pump LCD (`pump_lcd`)**
+
+- Round Screens (All round screens, circular): 480×480
+- Smaller Rectangular (NAUTILUS II RS LCD / iCUE LINK TITAN II ULTRA 360 LX LCD): 616×224, 616×456, 456×616, 456×304
+- 5" Large Rectangular (iCUE LINK TITAN II 360 RX LCD / iCUE LINK 5" LCD Screen Module): 696×308, 696×624, 696×1256, 624×344, 624×696, 1256×696
+
+**Keyboard LCD (`keyboard_lcd`)**
+
+- 320×170
+
+### Quality checks
+
+- information remains readable at every declared size
+- small layouts simplify secondary content when necessary
+- preview rendering remains compositionally consistent with the intended real-device layout
+- vertical Xeneon Edge previews do not inflate secondary text on M/L/XL when S-vertical is intended as the canonical baseline
+- text contrast is at least 4.5:1, or 3:1 for large text/UI elements
+- information is not conveyed by color alone
+- no content flashes more than 3 times per second
+- `prefers-reduced-motion` is respected if animations are used
+
+## Preflight Checklist
+
+### Documentation alignment
+
+- all generated meta tags exist in the docs/references
+- `manifest.json` `permissions` types and fields match `docs/permissions.md` exactly
+- plugin identifiers use the documented versions (`Media:1.1`, `StreamDeck:1.2`, …)
+- property types and attributes match the docs exactly
+- device identifiers match the docs exactly
+- plugin names/access patterns match the docs exactly
+- package layout does not rely on internal install paths
+
+### Structure
+
+- the file starts with uppercase `<!DOCTYPE html>`, not `<!doctype html>` (lowercase fails iCUE import, confirmed by test import 2026-10-21)
+- every void element in `<head>` is self-closed — `<meta ... />`, `<link ... />`, and any `br`/`hr`/`img`/`input`/`source` — because iCUE parses the head as XML and otherwise rejects the widget with "Missing Title Element"
+- `data-restrictions` uses JSON format
+- `x-icue-interactive` exists only when needed
+- `x-icue-groups` is valid JSON with no empty groups
+- file paths match exact case
+
+### Properties
+
+- `content` names are unique and alphanumeric
+- labels do not contain raw `&`
+- sliders use integer ranges where expected
+- CSS variables used by the stylesheet are actually set in JS
+- direct property access uses existence checks
+- component sizing uses semantic CSS tokens instead of scattered raw viewport units in selectors
+
+### Media backgrounds
+
+- `normalizeMediaConfig()` is used before `loadMedia()`
+- the fallback path escapes backslashes and single quotes
+- `#media-background` uses `visibility`, not `display: none`
+- `data-values` strings avoid ambiguous slash-heavy formats
+
+### Personalization
+
+- personalization group is last
+- color/transparency changes apply in real time
+
+### Localization
+
+- every `tr('...')` key exists in `translation.json`
+- labels and state messages are covered consistently
+- `<title>` uses `tr('Name')` or the quoted literal `'Name'`, with `Name` equal to manifest `name` (iCUE evaluates it as JavaScript — bare text throws a ReferenceError or produces `{}` in the settings panel)
+- no `tr('...')` in `aria-label` or HTML body text — those render as literal strings
+
+### User experience
+
+- loading/empty/error/content states are implemented, including blocked/denied-permission access where the widget uses permissions
+- empty/error states guide the user toward a fix
+- content remains inside display bounds
+- layouts adapt to declared orientations/sizes
+- preview/device-specific baseline overrides are used when raw `vmin` behavior would diverge between preview and device
+- offline-capable widgets preserve last known data when appropriate
+
+### Graphics
+
+- widget icon is a white single-color SVG with transparent background
+- Marketplace packages include both `icon.png` and `icon@2x.png` when required
