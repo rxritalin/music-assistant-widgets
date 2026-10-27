@@ -854,6 +854,8 @@ BRIDGE_JS_TEMPLATE = r"""
           <span>${widgetSchema.name} Settings</span>
         </div>
         <div class="ma-plat-actions">
+          <button class="ma-plat-btn" id="ma-plat-fullscreen" title="Toggle Fullscreen Mode">⛶ Fullscreen</button>
+          <button class="ma-plat-btn" id="ma-plat-install-pwa" title="Install as Standalone Web App">Install App</button>
           <a class="ma-plat-btn" href="${launcherHref}" title="Open All Widgets & HA Sidebar Launcher">All Widgets</a>
           <button class="ma-plat-btn" id="ma-plat-close">Close</button>
         </div>
@@ -865,6 +867,41 @@ BRIDGE_JS_TEMPLATE = r"""
     document.body.appendChild(drawer);
     root.appendChild(pill);
     document.body.appendChild(root);
+
+    let deferredInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+    });
+
+    if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      navigator.serviceWorker.register('./__ma_platform/sw.js').catch(function() {});
+    }
+
+    drawer.querySelector('#ma-plat-fullscreen').addEventListener('click', function() {
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(function() {});
+        }
+      } else if (document.exitFullscreen) {
+        document.exitFullscreen().catch(function() {});
+      }
+    });
+
+    drawer.querySelector('#ma-plat-install-pwa').addEventListener('click', async function() {
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+        return;
+      }
+      window.alert(
+        'To install this widget as a full-screen standalone Web App:\n\n' +
+        '• Android (Firefox / Chrome): Open the browser menu (⋮) and tap "Install" or "Add app to Home screen".\n' +
+        '• iOS / iPadOS (Safari): Tap the Share button and select "Add to Home Screen".\n\n' +
+        'Note: On modern Android, if Chrome blocks unencrypted LAN ports (8096), open this URL in Firefox for Android and tap ⋮ → "Add app to Home screen".'
+      );
+    });
 
     let idleTimer = null;
     function wakePill() {
@@ -1514,13 +1551,26 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
 
+    def _send_common_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Connection", "close")
+        self.close_connection = True
+
     def _send_bytes(self, body: bytes, content_type: str, status: int = 200) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
+        self._send_common_headers()
         self.end_headers()
-        self.wfile.write(body)
+        if getattr(self, "command", "GET") != "HEAD":
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     def _send_json(self, obj: Any, status: int = 200) -> None:
         body = json.dumps(obj).encode("utf-8")
@@ -1529,6 +1579,15 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
     def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0"))
         return self.rfile.read(length) if length > 0 else b""
+
+    def do_HEAD(self) -> None:
+        self.do_GET()
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self._send_common_headers()
+        self.end_headers()
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -1549,6 +1608,7 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
                     self.send_response(302)
                     self.send_header("Location", f"./{folder}/{suffix}")
                     self.send_header("Content-Length", "0")
+                    self._send_common_headers()
                     self.end_headers()
                     return
             self._send_bytes(LAUNCHER_HTML.encode("utf-8"), "text/html; charset=utf-8")
@@ -1585,6 +1645,53 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             }
             js_code = BRIDGE_JS_TEMPLATE.replace("__INITIAL_STATE_JSON__", json.dumps(initial_state))
             self._send_bytes(js_code.encode("utf-8"), "application/javascript; charset=utf-8")
+            return
+
+        # 3b. Dynamic Web App Manifest & Service Worker (PWA / Standalone Home Screen App)
+        if req_path.endswith("/__ma_platform/manifest.webmanifest"):
+            parts = [p for p in req_path.split("/") if p]
+            widget_folder = query.get("widget") or (parts[0] if parts and parts[0] in widgets else "MA-Roon")
+            profile_id = query.get("profile") or "default"
+            schema = widgets.get(widget_folder) or (next(iter(widgets.values())) if widgets else {})
+            w_name = schema.get("name", widget_folder)
+            prof_map = STORE.data["profiles"].get(widget_folder, {})
+            prof_name = prof_map.get(profile_id, {}).get("name", profile_id)
+            display_name = f"{w_name} ({prof_name})" if profile_id != "default" else w_name
+            effective = STORE.get_effective_values(schema, profile_id) if schema else {}
+            bg_color = effective.get("backgroundColor") or "#12091c"
+            start_suffix = f"?profile={profile_id}" if profile_id != "default" else ""
+            manifest_data = {
+                "id": f"/{widget_folder}/{start_suffix}",
+                "name": display_name,
+                "short_name": w_name,
+                "description": schema.get("description") or "Music Assistant Touchscreen Player",
+                "start_url": f"./{start_suffix}" if start_suffix else "./",
+                "display": "standalone",
+                "orientation": "any",
+                "background_color": bg_color,
+                "theme_color": bg_color,
+                "icons": [
+                    {
+                        "src": "./resources/icon.svg",
+                        "sizes": "any",
+                        "type": "image/svg+xml",
+                        "purpose": "any maskable",
+                    }
+                ],
+            }
+            self._send_bytes(
+                json.dumps(manifest_data, indent=2).encode("utf-8"),
+                "application/manifest+json; charset=utf-8",
+            )
+            return
+
+        if req_path.endswith("/__ma_platform/sw.js"):
+            sw_code = (
+                "self.addEventListener('install', () => self.skipWaiting());\n"
+                "self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));\n"
+                "self.addEventListener('fetch', () => {});\n"
+            )
+            self._send_bytes(sw_code.encode("utf-8"), "application/javascript; charset=utf-8")
             return
 
         # 4. Uploaded Media Assets
@@ -1624,7 +1731,16 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             raw_html = (widget_dir / "index.html").read_text(encoding="utf-8")
             base_tag = f'<base href="./{widget_folder}/" />' if not req_path.endswith("/") and not subpath else ""
             bridge_src = f"./__ma_platform/bridge.js?widget={widget_folder}&profile={profile_id}"
-            injection = f"\n  {base_tag}\n  <script src=\"{bridge_src}\"></script>"
+            manifest_href = f"./__ma_platform/manifest.webmanifest?widget={widget_folder}&profile={profile_id}"
+            pwa_tags = (
+                f'<link rel="manifest" href="{manifest_href}" />\n'
+                f'  <meta name="mobile-web-app-capable" content="yes" />\n'
+                f'  <meta name="apple-mobile-web-app-capable" content="yes" />\n'
+                f'  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />\n'
+                f'  <meta name="apple-mobile-web-app-title" content="{widget_folder}" />\n'
+                f'  <meta name="theme-color" content="#12091c" />'
+            )
+            injection = f"\n  {base_tag}\n  {pwa_tags}\n  <script src=\"{bridge_src}\"></script>"
             # Inject immediately after <head> so <base> applies to all <link rel="stylesheet"> tags in <head>
             if re.search(r"<head[^>]*>", raw_html, flags=re.IGNORECASE):
                 modified_html = re.sub(
@@ -1774,6 +1890,11 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "Not found"}, status=404)
 
 
+class WidgetHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 def run_server() -> None:
     discovered = discover_widgets()
     logger.info(
@@ -1781,7 +1902,7 @@ def run_server() -> None:
         PORT,
         ", ".join(discovered.keys()) or "none",
     )
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), WidgetRequestHandler)
+    server = WidgetHTTPServer(("0.0.0.0", PORT), WidgetRequestHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

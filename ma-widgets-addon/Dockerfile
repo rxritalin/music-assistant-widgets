@@ -2,7 +2,7 @@ FROM python:3.12-alpine
 
 RUN apk add --no-cache git
 
-ARG BUILD_VERSION=1.0.2
+ARG BUILD_VERSION=1.0.3
 
 # Clone the monorepo so all widget directories (MA-Roon, etc.) and server/app.py
 # are available when Home Assistant Supervisor builds from the ma-widgets-addon/ subfolder.
