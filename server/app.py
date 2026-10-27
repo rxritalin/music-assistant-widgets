@@ -29,6 +29,7 @@ import secrets
 import socket
 import ssl
 import struct
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -39,6 +40,52 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("ma_widgets_server")
+
+_ICON_PNG_CACHE: Dict[int, bytes] = {}
+
+
+def get_app_icon_png(size: int = 192) -> bytes:
+    """Generate a sleek purple/magenta vinyl-disc PNG icon using pure Python stdlib."""
+    if size in _ICON_PNG_CACHE:
+        return _ICON_PNG_CACHE[size]
+    rows = bytearray()
+    cx = (size - 1) / 2.0
+    cy = (size - 1) / 2.0
+    outer_r = size * 0.42
+    inner_r = size * 0.14
+    hole_r = size * 0.045
+    for y in range(size):
+        rows.append(0)  # PNG filter type 0 (None)
+        dy = y - cy
+        for x in range(size):
+            dx = x - cx
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist <= hole_r:
+                rows.extend((18, 9, 28, 255))
+            elif dist <= inner_r:
+                rows.extend((217, 70, 239, 255))
+            elif dist <= outer_r:
+                ring = int(dist / max(1.0, size * 0.03)) % 2
+                if ring == 0:
+                    rows.extend((88, 28, 135, 255))
+                else:
+                    rows.extend((126, 34, 206, 255))
+            else:
+                rows.extend((18, 9, 28, 255))
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", crc)
+
+    ihdr = struct.pack("!IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", zlib.compress(bytes(rows), 6))
+        + _chunk(b"IEND", b"")
+    )
+    _ICON_PNG_CACHE[size] = png
+    return png
 
 ROOT_DIR = Path(os.environ.get("MA_WIDGETS_ROOT", Path(__file__).resolve().parent.parent))
 DATA_DIR = Path(os.environ.get("MA_WIDGETS_DATA", ROOT_DIR / ".data"))
@@ -855,7 +902,7 @@ BRIDGE_JS_TEMPLATE = r"""
         </div>
         <div class="ma-plat-actions">
           <button class="ma-plat-btn" id="ma-plat-fullscreen" title="Toggle Fullscreen Mode">⛶ Fullscreen</button>
-          <button class="ma-plat-btn" id="ma-plat-install-pwa" title="Install as Standalone Web App">Install App</button>
+          <button class="ma-plat-btn is-primary" id="ma-plat-install-pwa" style="display:none;" title="Install as Standalone Web App">Install App</button>
           <a class="ma-plat-btn" href="${launcherHref}" title="Open All Widgets & HA Sidebar Launcher">All Widgets</a>
           <button class="ma-plat-btn" id="ma-plat-close">Close</button>
         </div>
@@ -869,9 +916,11 @@ BRIDGE_JS_TEMPLATE = r"""
     document.body.appendChild(root);
 
     let deferredInstallPrompt = null;
+    const installBtn = drawer.querySelector('#ma-plat-install-pwa');
     window.addEventListener('beforeinstallprompt', function(e) {
       e.preventDefault();
       deferredInstallPrompt = e;
+      if (installBtn) installBtn.style.display = 'inline-flex';
     });
 
     if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
@@ -886,21 +935,16 @@ BRIDGE_JS_TEMPLATE = r"""
       } else if (document.exitFullscreen) {
         document.exitFullscreen().catch(function() {});
       }
+      closeDrawer();
     });
 
-    drawer.querySelector('#ma-plat-install-pwa').addEventListener('click', async function() {
+    installBtn.addEventListener('click', async function() {
       if (deferredInstallPrompt) {
         deferredInstallPrompt.prompt();
         await deferredInstallPrompt.userChoice;
         deferredInstallPrompt = null;
-        return;
+        installBtn.style.display = 'none';
       }
-      window.alert(
-        'To install this widget as a full-screen standalone Web App:\n\n' +
-        '• Android (Firefox / Chrome): Open the browser menu (⋮) and tap "Install" or "Add app to Home screen".\n' +
-        '• iOS / iPadOS (Safari): Tap the Share button and select "Add to Home Screen".\n\n' +
-        'Note: On modern Android, if Chrome blocks unencrypted LAN ports (8096), open this URL in Firefox for Android and tap ⋮ → "Add app to Home screen".'
-      );
     });
 
     let idleTimer = null;
@@ -986,6 +1030,7 @@ BRIDGE_JS_TEMPLATE = r"""
             <button class="ma-plat-btn is-primary" id="ma-plat-new-prof">+ New</button>
           </div>
         </div>
+        <div class="ma-plat-group-desc">Tip: To install as a full-screen app on Android or iOS, open your browser's own menu (<b>⋮</b> in Firefox/Chrome or <b>Share</b> in Safari) and tap <b>"Add app to Home screen"</b> / <b>"Install"</b>.</div>
         <div class="ma-plat-status" id="ma-plat-save-status"></div>
       `;
       body.appendChild(profGroup);
@@ -1647,7 +1692,15 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             self._send_bytes(js_code.encode("utf-8"), "application/javascript; charset=utf-8")
             return
 
-        # 3b. Dynamic Web App Manifest & Service Worker (PWA / Standalone Home Screen App)
+        # 3b. Dynamic Web App Manifest, Icons & Service Worker (PWA / Standalone Home Screen App)
+        if req_path.endswith("/__ma_platform/icon-192.png"):
+            self._send_bytes(get_app_icon_png(192), "image/png")
+            return
+
+        if req_path.endswith("/__ma_platform/icon-512.png"):
+            self._send_bytes(get_app_icon_png(512), "image/png")
+            return
+
         if req_path.endswith("/__ma_platform/manifest.webmanifest"):
             parts = [p for p in req_path.split("/") if p]
             widget_folder = query.get("widget") or (parts[0] if parts and parts[0] in widgets else "MA-Roon")
@@ -1660,23 +1713,42 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             effective = STORE.get_effective_values(schema, profile_id) if schema else {}
             bg_color = effective.get("backgroundColor") or "#12091c"
             start_suffix = f"?profile={profile_id}" if profile_id != "default" else ""
+            # Resolve prefix before /<widget_folder>/__ma_platform or /__ma_platform
+            prefix_before_plat = req_path.split("/__ma_platform/manifest.webmanifest", 1)[0]
+            if not prefix_before_plat.endswith(f"/{widget_folder}"):
+                widget_base_path = f"{prefix_before_plat.rstrip('/')}/{widget_folder}"
+            else:
+                widget_base_path = prefix_before_plat
             manifest_data = {
-                "id": f"/{widget_folder}/{start_suffix}",
+                "id": f"{widget_base_path}/{start_suffix}",
                 "name": display_name,
                 "short_name": w_name,
                 "description": schema.get("description") or "Music Assistant Touchscreen Player",
-                "start_url": f"./{start_suffix}" if start_suffix else "./",
+                "start_url": f"{widget_base_path}/{start_suffix}",
+                "scope": f"{widget_base_path}/",
                 "display": "standalone",
                 "orientation": "any",
                 "background_color": bg_color,
                 "theme_color": bg_color,
                 "icons": [
                     {
-                        "src": "./resources/icon.svg",
+                        "src": f"{widget_base_path}/__ma_platform/icon-192.png",
+                        "sizes": "192x192",
+                        "type": "image/png",
+                        "purpose": "any maskable",
+                    },
+                    {
+                        "src": f"{widget_base_path}/__ma_platform/icon-512.png",
+                        "sizes": "512x512",
+                        "type": "image/png",
+                        "purpose": "any maskable",
+                    },
+                    {
+                        "src": f"{widget_base_path}/resources/icon.svg",
                         "sizes": "any",
                         "type": "image/svg+xml",
-                        "purpose": "any maskable",
-                    }
+                        "purpose": "any",
+                    },
                 ],
             }
             self._send_bytes(
@@ -1734,6 +1806,7 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             manifest_href = f"./__ma_platform/manifest.webmanifest?widget={widget_folder}&profile={profile_id}"
             pwa_tags = (
                 f'<link rel="manifest" href="{manifest_href}" />\n'
+                f'  <link rel="apple-touch-icon" href="./__ma_platform/icon-192.png" />\n'
                 f'  <meta name="mobile-web-app-capable" content="yes" />\n'
                 f'  <meta name="apple-mobile-web-app-capable" content="yes" />\n'
                 f'  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />\n'
