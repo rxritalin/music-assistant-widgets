@@ -571,6 +571,12 @@ BRIDGE_JS_TEMPLATE = r"""
 
     const style = document.createElement('style');
     style.textContent = `
+      :root {
+        --layout-unit: min(1vmin, 0.42vw) !important;
+      }
+      html, body {
+        background-color: var(--bg-color, #12091c) !important;
+      }
       #ma-platform-root {
         position: fixed;
         z-index: 99999;
@@ -1366,7 +1372,7 @@ LAUNCHER_HTML = r"""<!DOCTYPE html>
 
         let profRows = '';
         Object.values(profs).forEach(p => {
-          const relUrl = './' + w.folder + (p.id === 'default' ? '' : ('?profile=' + encodeURIComponent(p.id)));
+          const relUrl = './' + w.folder + '/' + (p.id === 'default' ? '' : ('?profile=' + encodeURIComponent(p.id)));
           const pinKey = ('ma-' + w.folder + '-' + p.id).toLowerCase().replace(/[^a-z0-9-]/g, '-');
           const isPinned = !!(appState.haPins && appState.haPins[pinKey]);
 
@@ -1374,7 +1380,7 @@ LAUNCHER_HTML = r"""<!DOCTYPE html>
             <div class="prof-item">
               <div>
                 <div class="prof-name">${p.name}</div>
-                <div class="prof-url">/${w.folder}${p.id === 'default' ? '' : ('?profile=' + p.id)}</div>
+                <div class="prof-url">/${w.folder}/${p.id === 'default' ? '' : ('?profile=' + p.id)}</div>
               </div>
               <div class="btn-row">
                 <a class="btn primary" href="${relUrl}">Launch</a>
@@ -1508,7 +1514,7 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
                 if folder in widgets:
                     suffix = f"?profile={prof_id}" if prof_id and prof_id != "default" else ""
                     self.send_response(302)
-                    self.send_header("Location", f"./{folder}{suffix}")
+                    self.send_header("Location", f"./{folder}/{suffix}")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
@@ -1561,12 +1567,23 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
 
         # 5. Widget Route: /<WidgetName> or /<WidgetName>/<subpath>
         parts = [p for p in req_path.split("/") if p]
-        if not parts or parts[0] not in widgets:
+        if not parts:
             self._send_bytes(b"Not found", "text/plain", status=404)
             return
 
-        widget_folder = parts[0]
-        subpath = "/".join(parts[1:])
+        if parts[0] in widgets:
+            widget_folder = parts[0]
+            subpath = "/".join(parts[1:])
+        elif parts[0] in ("styles", "scripts", "resources") and widgets:
+            # Fallback if a browser requests a relative asset without the widget prefix
+            referer = self.headers.get("Referer", "")
+            matched_folder = next((w for w in widgets if f"/{w}" in referer), next(iter(widgets.keys())))
+            widget_folder = matched_folder
+            subpath = "/".join(parts)
+        else:
+            self._send_bytes(b"Not found", "text/plain", status=404)
+            return
+
         widget_dir = ROOT_DIR / widget_folder
 
         if not subpath or subpath == "index.html":
@@ -1574,9 +1591,16 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             raw_html = (widget_dir / "index.html").read_text(encoding="utf-8")
             base_tag = f'<base href="./{widget_folder}/" />' if not req_path.endswith("/") and not subpath else ""
             bridge_src = f"./__ma_platform/bridge.js?widget={widget_folder}&profile={profile_id}"
-            injection = f"\n  {base_tag}\n  <script src=\"{bridge_src}\"></script>\n"
-            if "</head>" in raw_html:
-                modified_html = raw_html.replace("</head>", injection + "</head>", 1)
+            injection = f"\n  {base_tag}\n  <script src=\"{bridge_src}\"></script>"
+            # Inject immediately after <head> so <base> applies to all <link rel="stylesheet"> tags in <head>
+            if re.search(r"<head[^>]*>", raw_html, flags=re.IGNORECASE):
+                modified_html = re.sub(
+                    r"(<head[^>]*>)",
+                    r"\1" + injection,
+                    raw_html,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
             else:
                 modified_html = injection + raw_html
             self._send_bytes(modified_html.encode("utf-8"), "text/html; charset=utf-8")
