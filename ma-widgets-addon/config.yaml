@@ -1,0 +1,37 @@
+name: "Music Assistant Widgets"
+description: "Interactive Music Assistant touchscreen & desktop widgets (MA-Roon and more) with per-screen profiles, MilkDrop visualizer, synchronized lyrics, and built-in Sendspin player."
+version: "1.0.0"
+slug: "music_assistant_widgets"
+url: "https://github.com/rxritalin/music-assistant-widgets"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8096
+panel_icon: "mdi:album"
+panel_title: "MA Widgets"
+homeassistant_api: true
+hassio_api: true
+hassio_role: admin
+ports:
+  8096/tcp: 8096
+ports_description:
+  8096/tcp: "Direct LAN Web UI & Multi-Screen Widget Server (e.g. http://<host>:8096/MA-Roon)"
+options:
+  local_server_url: ""
+  remote_id: ""
+  access_token: ""
+  default_speaker: ""
+  default_ingress_target: "launcher"
+  external_base_url: ""
+schema:
+  local_server_url: "str?"
+  remote_id: "str?"
+  access_token: "password?"
+  default_speaker: "str?"
+  default_ingress_target: "str?"
+  external_base_url: "str?"

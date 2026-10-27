@@ -16,9 +16,11 @@ venv/
 .env
 .env.*
 
-# Local Antigravity MCP plugins & credentials (NEVER commit)
+# Local Antigravity MCP plugins, server runtime data & credentials (NEVER commit)
 .agents/plugins/
 **/*mcp_config.json
+.data/
+ma-widgets-data/
 
 # Scratch / temporary debug files
 scratch/

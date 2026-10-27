@@ -1,0 +1,16 @@
+services:
+  ma-widgets:
+    build: .
+    image: ghcr.io/rxritalin/music-assistant-widgets:latest
+    container_name: music-assistant-widgets
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./ma-widgets-data:/data
+    environment:
+      - PORT=8096
+      # Optional: if running standalone Docker alongside Home Assistant and you want
+      # "Pin to HA Sidebar" to work, provide your HA WebSocket URL and a Long-Lived HA Token:
+      # - HA_WS_URL=ws://192.168.1.2:8123/api/websocket
+      # - HA_TOKEN=your_home_assistant_long_lived_token
