@@ -32,9 +32,9 @@
   <meta name="x-icue-property" content="accentColor" data-label="tr('Accent Color')" data-type="color" data-default="'#c084fc'" />
   <meta name="x-icue-property" content="backgroundColor" data-label="tr('Background Color')" data-type="color" data-default="'#12091c'" />
   <meta name="x-icue-property" content="backgroundMedia" data-label="tr('Background Image')" data-type="media-selector" data-filters="['*.png','*.jpg','*.jpeg','*.webp','*.gif','*.mp4','*.webm']" />
-  <meta name="x-icue-property" content="bgBrightness" data-label="tr('Background Brightness')" data-type="slider" data-default="100" data-min="0" data-max="200" data-step="5" data-unit-label="'%'" />
+  <meta name="x-icue-property" content="bgBrightness" data-label="tr('Background Brightness')" data-type="slider" data-default="80" data-min="0" data-max="200" data-step="5" data-unit-label="'%'" />
   <meta name="x-icue-property" content="glassBlur" data-label="tr('Glass Blur')" data-type="slider" data-default="15" data-min="0" data-max="100" data-step="5" data-unit-label="'px'" />
-  <meta name="x-icue-property" content="transparency" data-label="tr('Background Transparency')" data-type="slider" data-default="100" data-min="0" data-max="100" data-step="5" data-unit-label="'%'" />
+  <meta name="x-icue-property" content="transparency" data-label="tr('Background Transparency')" data-type="slider" data-default="40" data-min="0" data-max="100" data-step="5" data-unit-label="'%'" />
 
   <script id="x-icue-groups" type="application/json">
   [
@@ -1084,11 +1084,11 @@
                 <path d="m19.07 4.93-1.41 1.41"></path>
               </svg>
               <div id="milkdrop-brightness-track" class="speaker-vol-slider">
-                <div id="milkdrop-brightness-fill" class="speaker-vol-fill" style="width: 50%;"></div>
-                <div id="milkdrop-brightness-thumb" class="speaker-vol-thumb" style="left: 50%;"></div>
-                <input id="milkdrop-brightness-input" class="native-slider-input" type="range" min="0" max="200" step="5" value="100" aria-label="Background Brightness" />
+                <div id="milkdrop-brightness-fill" class="speaker-vol-fill" style="width: 40%;"></div>
+                <div id="milkdrop-brightness-thumb" class="speaker-vol-thumb" style="left: 40%;"></div>
+                <input id="milkdrop-brightness-input" class="native-slider-input" type="range" min="0" max="200" step="5" value="80" aria-label="Background Brightness" />
               </div>
-              <span id="milkdrop-brightness-val" class="milkdrop-menu-value">100%</span>
+              <span id="milkdrop-brightness-val" class="milkdrop-menu-value">80%</span>
             </div>
 
             <div id="milkdrop-preset-section" style="display:flex; flex-direction:column; gap:calc(var(--layout-unit) * 1.2); min-height:0; flex:1 1 auto;">
@@ -1287,6 +1287,7 @@
     }
 
     function clampRange(v, min, max, d) {
+      if (v === undefined || v === null || v === '') return d;
       v = Number(v);
       if (!Number.isFinite(v)) return d;
       return Math.max(min, Math.min(max, v));
@@ -1916,7 +1917,7 @@
         enabled: true,
         blur: 0,
         opacity: 100,
-        brightness: 100,
+        brightness: 80,
         presetMode: 'fixed',
         selectedPreset: 'martin - another kind of groove',
         favorites: [
@@ -1965,7 +1966,9 @@
               if (typeof parsed.enabled === 'boolean') prefs.enabled = parsed.enabled;
               if (typeof parsed.blur === 'number') prefs.blur = Math.max(0, Math.min(30, Math.round(parsed.blur)));
               if (typeof parsed.opacity === 'number') prefs.opacity = Math.max(10, Math.min(100, Math.round(parsed.opacity)));
-              if (typeof parsed.brightness === 'number') prefs.brightness = Math.max(0, Math.min(200, Math.round(parsed.brightness)));
+              if (typeof parsed.brightness === 'number' && parsed.brightness > 0) {
+                prefs.brightness = Math.max(0, Math.min(200, Math.round(parsed.brightness)));
+              }
               if (typeof parsed.presetMode === 'string') prefs.presetMode = parsed.presetMode;
               if (typeof parsed.selectedPreset === 'string' && parsed.selectedPreset) {
                 prefs.selectedPreset = parsed.selectedPreset;
@@ -2006,7 +2009,7 @@
           prefs.opacity = Math.max(10, Math.min(100, Math.round(p.visualizer_opacity)));
           changed = true;
         }
-        if (typeof p.visualizer_brightness === 'number') {
+        if (typeof p.visualizer_brightness === 'number' && p.visualizer_brightness > 0 && getIcueProperty('bgBrightness') === undefined) {
           prefs.brightness = Math.max(0, Math.min(200, Math.round(p.visualizer_brightness)));
           changed = true;
         }
@@ -2094,7 +2097,7 @@
           if (raw) {
             hasSavedPref = true;
             const parsed = JSON.parse(raw);
-            savedHasBrightness = Boolean(parsed && typeof parsed.brightness === 'number');
+            savedHasBrightness = Boolean(parsed && typeof parsed.brightness === 'number' && parsed.brightness > 0);
           }
         } catch (e) {}
 
@@ -2111,7 +2114,7 @@
 
         const rawBright = getIcueProperty('bgBrightness');
         if (rawBright !== undefined && rawBright !== null) {
-          const icueBright = clampRange(rawBright, 0, 200, 100);
+          const icueBright = clampRange(rawBright, 0, 200, 80);
           if (icueBright !== lastObservedIcueBrightnessProp) {
             if (lastObservedIcueBrightnessProp !== null || !savedHasBrightness) {
               prefs.brightness = Math.round(icueBright);
@@ -2131,7 +2134,7 @@
 
       function getBrightness() {
         syncIcueSettingProperty();
-        return clampRange(prefs.brightness, 0, 200, 100);
+        return clampRange(prefs.brightness, 0, 200, 80);
       }
 
       function applyLayerVisualStyles() {
@@ -2845,11 +2848,15 @@
 
       function setBrightness(val, commit) {
         prefs.brightness = Math.max(0, Math.min(200, Math.round(Number(val) || 0)));
+        window.bgBrightness = prefs.brightness;
         applyLayerVisualStyles();
         renderMenu(false);
         if (commit) {
           savePrefs();
           pushPrefToServer('visualizer_brightness', prefs.brightness);
+          if (typeof window.__maPlatformUpdateProperty === 'function') {
+            window.__maPlatformUpdateProperty('bgBrightness', prefs.brightness);
+          }
         }
       }
 
@@ -7607,10 +7614,10 @@
     function applyStyles() {
       const root = document.documentElement;
 
-      const bgTransparency = clampRange(getIcueProperty('transparency'), 0, 100, 100) / 100;
+      const bgTransparency = clampRange(getIcueProperty('transparency'), 0, 100, 40) / 100;
       const effectiveBrightPct = (typeof milkdropController !== 'undefined' && typeof milkdropController.getBrightness === 'function')
         ? milkdropController.getBrightness()
-        : clampRange(getIcueProperty('bgBrightness'), 0, 200, 100);
+        : clampRange(getIcueProperty('bgBrightness'), 0, 200, 80);
       const brightness = effectiveBrightPct / 100;
       const blur = clampRange(getIcueProperty('glassBlur'), 0, 100, 15);
 

@@ -226,6 +226,7 @@ class ConfigStore:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
         self.data: Dict[str, Any] = {
+            "schemaVersion": 2,
             "global": {
                 "localServerUrl": "",
                 "remoteId": "",
@@ -245,6 +246,7 @@ class ConfigStore:
             try:
                 loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 if isinstance(loaded, dict):
+                    self.data["schemaVersion"] = loaded.get("schemaVersion", 1)
                     if isinstance(loaded.get("global"), dict):
                         self.data["global"].update(loaded["global"])
                     if isinstance(loaded.get("profiles"), dict):
@@ -287,6 +289,7 @@ class ConfigStore:
 
     def ensure_widget_profiles(self, widgets: Dict[str, Dict[str, Any]]) -> None:
         changed = False
+        needs_v2_migration = self.data.get("schemaVersion", 1) < 2
         for folder, schema in widgets.items():
             if folder not in self.data["profiles"] or not isinstance(self.data["profiles"][folder], dict):
                 self.data["profiles"][folder] = {}
@@ -299,6 +302,19 @@ class ConfigStore:
                     "values": defaults,
                 }
                 changed = True
+            if needs_v2_migration:
+                for prof_obj in self.data["profiles"][folder].values():
+                    vals = prof_obj.get("values")
+                    if isinstance(vals, dict):
+                        if vals.get("bgBrightness") in (None, 0, 100):
+                            vals["bgBrightness"] = schema["properties"].get("bgBrightness", {}).get("default", 80)
+                            changed = True
+                        if vals.get("transparency") in (None, 0, 100):
+                            vals["transparency"] = schema["properties"].get("transparency", {}).get("default", 40)
+                            changed = True
+        if needs_v2_migration:
+            self.data["schemaVersion"] = 2
+            changed = True
         if changed:
             self.save()
 
@@ -312,6 +328,10 @@ class ConfigStore:
         effective: Dict[str, Any] = {}
         for prop_name, prop_meta in widget_schema["properties"].items():
             val = saved_vals.get(prop_name, prop_meta["default"])
+            if prop_name == "bgBrightness" and (val is None or val == "" or val == 0):
+                val = prop_meta["default"]
+            if prop_name == "transparency" and (val is None or val == ""):
+                val = prop_meta["default"]
             if prop_name in ("localServerUrl", "remoteId", "accessToken", "targetSpeaker") and not val:
                 global_val = self.data["global"].get(prop_name, "")
                 if global_val:
@@ -579,9 +599,9 @@ BRIDGE_JS_TEMPLATE = r"""
       }
       #ma-platform-root {
         position: fixed;
-        z-index: 99999;
-        top: 12px;
-        right: 12px;
+        z-index: 9000;
+        bottom: 14px;
+        right: 14px;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         color: #f8fafc;
         user-select: none;
@@ -610,10 +630,15 @@ BRIDGE_JS_TEMPLATE = r"""
       .ma-plat-pill.is-idle {
         opacity: 0.16;
       }
+      .ma-plat-pill.is-drawer-open {
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transform: translateY(6px);
+      }
       .ma-plat-pill:hover, .ma-plat-pill:focus-within {
         opacity: 1 !important;
         background: rgba(24, 16, 40, 0.92);
-        transform: translateY(1px);
+        transform: translateY(-1px);
       }
       .ma-plat-pill svg {
         width: 15px;
@@ -860,11 +885,13 @@ BRIDGE_JS_TEMPLATE = r"""
       backdrop.classList.add('is-open');
       drawer.classList.add('is-open');
       pill.classList.remove('is-idle');
+      pill.classList.add('is-drawer-open');
     }
 
     function closeDrawer() {
       backdrop.classList.remove('is-open');
       drawer.classList.remove('is-open');
+      pill.classList.remove('is-drawer-open');
       wakePill();
     }
 
@@ -894,6 +921,12 @@ BRIDGE_JS_TEMPLATE = r"""
         }
       }, 280);
     }
+
+    window.__maPlatformUpdateProperty = function(propName, val) {
+      effectiveValues[propName] = val;
+      window[propName] = val;
+      queueProfileSave();
+    };
 
     function renderDrawerBody() {
       const body = drawer.querySelector('#ma-plat-body');
@@ -1640,8 +1673,10 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             if widget_folder not in widgets:
                 self._send_json({"error": f"Unknown widget: {widget_folder}"}, status=404)
                 return
+            schema_defaults = {k: v["default"] for k, v in widgets[widget_folder]["properties"].items()}
             existing = STORE.data["profiles"][widget_folder].get(profile_id, {})
-            merged_values = dict(existing.get("values", {}))
+            merged_values = dict(schema_defaults)
+            merged_values.update(existing.get("values", {}))
             if isinstance(values, dict):
                 merged_values.update(values)
             STORE.data["profiles"][widget_folder][profile_id] = {
