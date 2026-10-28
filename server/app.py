@@ -804,7 +804,7 @@ BRIDGE_JS_TEMPLATE = r"""
 
     cardSize = Math.max(140, Math.round(cardSize));
     const powerBtnSize = Math.round(Math.min(cardSize * 0.76, Math.min(canvasW, canvasH) * 0.48));
-    const navWidth = Math.round(Math.max(170, Math.min(canvasW * 0.34, unit * 26)));
+    const navWidth = Math.round(unit * 26);
 
     const docEl = document.documentElement;
     docEl.setAttribute('data-ma-layout', layoutMode);
@@ -876,6 +876,32 @@ BRIDGE_JS_TEMPLATE = r"""
         padding-bottom: max(calc(var(--layout-unit) * 3.8), 46px) !important;
       }
 
+      /* Ensure native borderless inline slide-out push menu on all landscape layouts (32:9, 16:9, 16:10, 3:2, 4:3) */
+      html[data-ma-layout="ultrawide"] .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-9"] .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-10"] .left-nav-drawer,
+      html[data-ma-layout="split-tb"] .left-nav-drawer {
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        z-index: auto !important;
+        background: transparent !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        overflow-x: hidden !important;
+        overflow-y: hidden !important;
+        scrollbar-width: none !important;
+      }
+      html[data-ma-layout="ultrawide"] .player-screen.nav-open .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-9"] .player-screen.nav-open .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-10"] .player-screen.nav-open .left-nav-drawer,
+      html[data-ma-layout="split-tb"] .player-screen.nav-open .left-nav-drawer {
+        overflow-y: auto !important;
+      }
+
       /* -------------------------------------------------------------------
          1. ULTRAWIDE 32:9 LAYOUT (Xeneon Edge)
          ------------------------------------------------------------------- */
@@ -883,9 +909,35 @@ BRIDGE_JS_TEMPLATE = r"""
         display: flex !important;
         flex-direction: row !important;
         align-items: center !important;
+        justify-content: flex-start !important;
+        padding-top: var(--space-md) !important;
+        padding-left: var(--space-lg) !important;
+        padding-right: var(--space-lg) !important;
+        gap: var(--space-lg) !important;
+      }
+      html[data-ma-layout="ultrawide"] .left-nav-drawer {
+        width: 0 !important;
+        padding: calc(var(--layout-unit) * 5) 0 0 0 !important;
+      }
+      html[data-ma-layout="ultrawide"] .player-screen.nav-open .left-nav-drawer {
+        width: var(--nav-width) !important;
+        opacity: 1 !important;
       }
       html[data-ma-layout="ultrawide"] .player-details-column {
         height: 100% !important;
+        width: auto !important;
+        flex: 1 1 0 !important;
+      }
+      html[data-ma-layout="ultrawide"] .track-metadata-block {
+        align-items: flex-start !important;
+        text-align: left !important;
+      }
+      html[data-ma-layout="ultrawide"] .track-quick-actions {
+        justify-content: flex-start !important;
+      }
+      html[data-ma-layout="ultrawide"] .lyrics-stage {
+        position: absolute !important;
+        display: flex !important;
       }
 
       /* -------------------------------------------------------------------
@@ -905,44 +957,40 @@ BRIDGE_JS_TEMPLATE = r"""
         display: flex !important;
         flex-direction: row !important;
         align-items: center !important;
-        justify-content: center !important;
-        padding-top: calc(var(--layout-unit) * 7.5) !important;
-        padding-left: calc(var(--layout-unit) * 5.2) !important;
+        justify-content: flex-start !important;
+        padding-top: calc(var(--layout-unit) * 3.8) !important;
+        padding-left: var(--space-lg) !important;
         padding-right: calc(var(--layout-unit) * 5.2) !important;
-        gap: calc(var(--layout-unit) * 5.2) !important;
+        gap: 0 !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-10"] .left-nav-drawer {
+        width: 0 !important;
+        margin-right: 0 !important;
+        padding: calc(var(--layout-unit) * 5) 0 0 0 !important;
+        transition: width 0.38s cubic-bezier(0.22, 1, 0.36, 1), margin-right 0.38s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .player-screen.nav-open .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-10"] .player-screen.nav-open .left-nav-drawer {
+        width: var(--nav-width) !important;
+        margin-right: calc(var(--layout-unit) * 3.8) !important;
+        opacity: 1 !important;
       }
       html[data-ma-layout="widescreen-16-9"] .media-card-column,
       html[data-ma-layout="widescreen-16-10"] .media-card-column {
+        margin-left: calc(var(--layout-unit) * 3.2) !important;
+        margin-right: calc(var(--layout-unit) * 5.0) !important;
+        transition: margin-left 0.38s cubic-bezier(0.22, 1, 0.36, 1) !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .player-screen.nav-open .media-card-column,
+      html[data-ma-layout="widescreen-16-10"] .player-screen.nav-open .media-card-column {
         margin-left: 0 !important;
-      }
-      html[data-ma-layout="widescreen-16-9"] .left-nav-drawer,
-      html[data-ma-layout="widescreen-16-10"] .left-nav-drawer,
-      html[data-ma-layout="split-tb"] .left-nav-drawer,
-      html[data-ma-layout="portrait"] .left-nav-drawer {
-        position: absolute !important;
-        top: calc(var(--layout-unit) * 9.8) !important;
-        left: var(--space-md) !important;
-        z-index: 29 !important;
-        background: rgba(16, 11, 26, 0.94) !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
-        border: 1px solid rgba(255, 255, 255, 0.16) !important;
-        border-radius: var(--radius-card) !important;
-        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.68) !important;
-        padding: 0 !important;
-        pointer-events: none !important;
-      }
-      html[data-ma-layout="widescreen-16-9"] .player-screen.nav-open .left-nav-drawer,
-      html[data-ma-layout="widescreen-16-10"] .player-screen.nav-open .left-nav-drawer,
-      html[data-ma-layout="split-tb"] .player-screen.nav-open .left-nav-drawer,
-      html[data-ma-layout="portrait"] .player-screen.nav-open .left-nav-drawer {
-        width: var(--nav-width) !important;
-        padding: var(--space-sm) !important;
-        opacity: 1 !important;
-        pointer-events: auto !important;
       }
       html[data-ma-layout="widescreen-16-9"] .player-details-column,
       html[data-ma-layout="widescreen-16-10"] .player-details-column {
+        flex: 1 1 0 !important;
+        width: auto !important;
+        min-width: 0 !important;
         height: min(100%, max(var(--card-size), 76%)) !important;
         padding: calc(var(--layout-unit) * 1.0) calc(var(--layout-unit) * 1.5) !important;
         justify-content: space-between !important;
@@ -953,6 +1001,10 @@ BRIDGE_JS_TEMPLATE = r"""
         padding-right: calc(var(--layout-unit) * 2.0) !important;
         align-items: flex-start !important;
         text-align: left !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .track-quick-actions,
+      html[data-ma-layout="widescreen-16-10"] .track-quick-actions {
+        justify-content: flex-start !important;
       }
       html[data-ma-layout="widescreen-16-9"] .track-title,
       html[data-ma-layout="widescreen-16-10"] .track-title,
@@ -978,7 +1030,7 @@ BRIDGE_JS_TEMPLATE = r"""
 
       /* -------------------------------------------------------------------
          3. 4:3 & 3:2 TOP / BOTTOM SPLIT LAYOUT (split-tb)
-            Top: [Album Art / Flip Card] | [Metadata + 5-Line Lyrics]
+            Top: [Inline Slide-Out Nav] | [Album Art / Flip Card] | [Metadata + 5-Line Lyrics]
             Bottom: [Full-Width Seek Bar + 7-Button Transport Footer]
          ------------------------------------------------------------------- */
       html[data-ma-layout="split-tb"] .standby-default-bg {
@@ -990,26 +1042,46 @@ BRIDGE_JS_TEMPLATE = r"""
       }
       html[data-ma-layout="split-tb"] .player-screen {
         display: grid !important;
-        grid-template-columns: auto minmax(0, 1fr) !important;
+        grid-template-columns: auto auto minmax(0, 1fr) !important;
         grid-template-rows: auto minmax(0, 1fr) auto !important;
         align-items: stretch !important;
-        column-gap: calc(var(--layout-unit) * 4.2) !important;
+        column-gap: 0 !important;
         row-gap: calc(var(--layout-unit) * 1.8) !important;
         padding-top: calc(var(--layout-unit) * 8.6) !important;
-        padding-left: calc(var(--layout-unit) * 4.4) !important;
+        padding-left: calc(var(--layout-unit) * 4.0) !important;
         padding-right: calc(var(--layout-unit) * 4.4) !important;
       }
-      html[data-ma-layout="split-tb"] .media-card-column {
+      html[data-ma-layout="split-tb"] .left-nav-drawer {
         grid-column: 1 !important;
         grid-row: 1 / 3 !important;
         align-self: center !important;
+        max-height: 100% !important;
+        width: 0 !important;
+        margin-right: 0 !important;
+        padding: 0 !important;
+        gap: calc(var(--layout-unit) * 1.15) !important;
+        transition: width 0.38s cubic-bezier(0.22, 1, 0.36, 1), margin-right 0.38s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease !important;
+      }
+      html[data-ma-layout="split-tb"] .left-nav-drawer .nav-item-btn {
+        padding: calc(var(--layout-unit) * 1.35) calc(var(--layout-unit) * 2.0) !important;
+      }
+      html[data-ma-layout="split-tb"] .player-screen.nav-open .left-nav-drawer {
+        width: var(--nav-width) !important;
+        margin-right: calc(var(--layout-unit) * 3.2) !important;
+        opacity: 1 !important;
+      }
+      html[data-ma-layout="split-tb"] .media-card-column {
+        grid-column: 2 !important;
+        grid-row: 1 / 3 !important;
+        align-self: center !important;
         margin-left: 0 !important;
+        margin-right: calc(var(--layout-unit) * 4.2) !important;
       }
       html[data-ma-layout="split-tb"] .player-details-column {
         display: contents !important;
       }
       html[data-ma-layout="split-tb"] .track-metadata-block {
-        grid-column: 2 !important;
+        grid-column: 3 !important;
         grid-row: 1 !important;
         align-self: start !important;
         align-items: flex-start !important;
@@ -1021,7 +1093,7 @@ BRIDGE_JS_TEMPLATE = r"""
         justify-content: flex-start !important;
       }
       html[data-ma-layout="split-tb"] .lyrics-stage {
-        grid-column: 2 !important;
+        grid-column: 3 !important;
         grid-row: 2 !important;
         position: relative !important;
         inset: auto !important;
@@ -1057,6 +1129,25 @@ BRIDGE_JS_TEMPLATE = r"""
       /* -------------------------------------------------------------------
          4. PORTRAIT STACK LAYOUT (Custom W < H or Vertical Mobile)
          ------------------------------------------------------------------- */
+      html[data-ma-layout="portrait"] .left-nav-drawer {
+        position: absolute !important;
+        top: calc(var(--layout-unit) * 9.8) !important;
+        left: var(--space-md) !important;
+        z-index: 29 !important;
+        background: rgba(16, 11, 26, 0.94) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+        border-radius: var(--radius-card) !important;
+        padding: 0 !important;
+        pointer-events: none !important;
+      }
+      html[data-ma-layout="portrait"] .player-screen.nav-open .left-nav-drawer {
+        width: var(--nav-width) !important;
+        padding: var(--space-sm) !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+      }
       html[data-ma-layout="portrait"] .standby-power-zone {
         left: 50% !important;
         top: 42% !important;

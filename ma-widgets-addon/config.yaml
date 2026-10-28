@@ -1,6 +1,6 @@
 name: "Music Assistant Widgets"
 description: "Interactive Music Assistant touchscreen & desktop widgets (MA-Roon and more) with per-screen profiles, MilkDrop visualizer, synchronized lyrics, and built-in Sendspin player."
-version: "1.1.0"
+version: "1.1.1"
 slug: "music_assistant_widgets"
 url: "https://github.com/rxritalin/music-assistant-widgets"
 init: false
