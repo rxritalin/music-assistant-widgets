@@ -266,6 +266,16 @@ def discover_widgets() -> Dict[str, Dict[str, Any]]:
     return widgets
 
 
+PLATFORM_LAYOUT_DEFAULTS: Dict[str, Any] = {
+    "_layoutAspect": "auto",       # "auto" | "32:9" | "16:10" | "16:9" | "3:2" | "4:3" | "custom"
+    "_layoutCustomWidth": 1920,
+    "_layoutCustomHeight": 1080,
+    "_layoutCanvasFit": "fill",    # "fill" | "frame" | "exact"
+    "_layoutDensity": "standard",  # "compact" | "standard" | "tenfoot"
+    "_layoutScale": 100,           # 50..150 (%)
+}
+
+
 class ConfigStore:
     """Manages persistent global settings, per-screen widget profiles, and HA sidebar pins."""
 
@@ -342,7 +352,8 @@ class ConfigStore:
                 self.data["profiles"][folder] = {}
                 changed = True
             if "default" not in self.data["profiles"][folder]:
-                defaults = {k: v["default"] for k, v in schema["properties"].items()}
+                defaults = dict(PLATFORM_LAYOUT_DEFAULTS)
+                defaults.update({k: v["default"] for k, v in schema["properties"].items()})
                 self.data["profiles"][folder]["default"] = {
                     "id": "default",
                     "name": "Default Profile",
@@ -373,6 +384,10 @@ class ConfigStore:
         saved_vals = prof.get("values", {})
 
         effective: Dict[str, Any] = {}
+        for k, d_val in PLATFORM_LAYOUT_DEFAULTS.items():
+            val = saved_vals.get(k, d_val)
+            effective[k] = d_val if (val is None or val == "") else val
+
         for prop_name, prop_meta in widget_schema["properties"].items():
             val = saved_vals.get(prop_name, prop_meta["default"])
             if prop_name == "bgBrightness" and (val is None or val == "" or val == 0):
@@ -633,17 +648,467 @@ BRIDGE_JS_TEMPLATE = r"""
     return data;
   }
 
+  let lastResolvedLayoutSummary = '';
+  let isDispatchingSyntheticResize = false;
+  let lastCanvasSizeKey = '';
+
+  function getLayoutConfig() {
+    const aspect = String(effectiveValues._layoutAspect || 'auto');
+    const customW = Math.max(240, Math.min(7680, Number(effectiveValues._layoutCustomWidth) || 1920));
+    const customH = Math.max(240, Math.min(4320, Number(effectiveValues._layoutCustomHeight) || 1080));
+    const fit = String(effectiveValues._layoutCanvasFit || 'fill');
+    const density = String(effectiveValues._layoutDensity || 'standard');
+    const scale = Math.max(50, Math.min(150, Number(effectiveValues._layoutScale) || 100));
+    return { aspect, customW, customH, fit, density, scale };
+  }
+
+  function applyPlatformLayout() {
+    if (isDispatchingSyntheticResize) return;
+    const cfg = getLayoutConfig();
+    const winW = Math.max(240, window.innerWidth || 1280);
+    const winH = Math.max(240, window.innerHeight || 720);
+
+    const presetDims = {
+      '32:9': [2560, 720],
+      '16:10': [1920, 1200],
+      '16:9': [1920, 1080],
+      '3:2': [1800, 1200],
+      '4:3': [1600, 1200],
+      'custom': [cfg.customW, cfg.customH]
+    };
+
+    let targetRatio = winW / winH;
+    let refW = winW;
+    let refH = winH;
+    if (presetDims[cfg.aspect]) {
+      refW = presetDims[cfg.aspect][0];
+      refH = presetDims[cfg.aspect][1];
+      targetRatio = refW / refH;
+    }
+
+    let canvasW = winW;
+    let canvasH = winH;
+    if (cfg.fit === 'frame' && cfg.aspect !== 'auto') {
+      if ((winW / winH) > targetRatio) {
+        canvasH = winH;
+        canvasW = Math.max(240, Math.round(winH * targetRatio));
+      } else {
+        canvasW = winW;
+        canvasH = Math.max(240, Math.round(winW / targetRatio));
+      }
+    } else if (cfg.fit === 'exact' && cfg.aspect !== 'auto') {
+      const downscale = Math.min(1, winW / refW, winH / refH);
+      canvasW = Math.max(240, Math.round(refW * downscale));
+      canvasH = Math.max(240, Math.round(refH * downscale));
+    }
+
+    const effectiveRatio = (cfg.aspect === 'auto') ? (canvasW / canvasH) : targetRatio;
+
+    let layoutMode = 'widescreen-16-9';
+    let layoutLabel = '16:9 Widescreen';
+    let subAspect = '16:9';
+
+    if (cfg.aspect === '32:9' || ( (cfg.aspect === 'auto' || cfg.aspect === 'custom') && effectiveRatio >= 2.35 )) {
+      layoutMode = 'ultrawide';
+      layoutLabel = '32:9 Ultrawide';
+      subAspect = '32:9';
+    } else if (cfg.aspect === '16:9' || ( (cfg.aspect === 'auto' || cfg.aspect === 'custom') && effectiveRatio >= 1.68 )) {
+      layoutMode = 'widescreen-16-9';
+      layoutLabel = '16:9 Widescreen';
+      subAspect = '16:9';
+    } else if (cfg.aspect === '16:10' || ( (cfg.aspect === 'auto' || cfg.aspect === 'custom') && effectiveRatio >= 1.55 )) {
+      layoutMode = 'widescreen-16-10';
+      layoutLabel = '16:10 Widescreen';
+      subAspect = '16:10';
+    } else if (cfg.aspect === '3:2' || ( (cfg.aspect === 'auto' || cfg.aspect === 'custom') && effectiveRatio >= 1.41 )) {
+      layoutMode = 'split-tb';
+      layoutLabel = '3:2 Top/Bottom Split';
+      subAspect = '3:2';
+    } else if (cfg.aspect === '4:3' || ( (cfg.aspect === 'auto' || cfg.aspect === 'custom') && effectiveRatio >= 1.05 )) {
+      layoutMode = 'split-tb';
+      layoutLabel = '4:3 Top/Bottom Split';
+      subAspect = '4:3';
+    } else {
+      layoutMode = 'portrait';
+      layoutLabel = 'Portrait Stack';
+      subAspect = 'portrait';
+    }
+
+    // Damped High-DPI / 4K Display Density Curve
+    const shortSide = Math.min(canvasW, canvasH);
+    const longSide = Math.max(canvasW, canvasH);
+    let dampedShort = shortSide;
+    let densityMult = 0.95;
+
+    if (cfg.density === 'compact') {
+      dampedShort = shortSide > 760 ? (760 + (shortSide - 760) * 0.18) : shortSide;
+      densityMult = 0.72;
+    } else if (cfg.density === 'tenfoot') {
+      dampedShort = shortSide > 800 ? (800 + (shortSide - 800) * 0.78) : shortSide;
+      densityMult = 1.24;
+    } else {
+      // standard (Tablet / Touch Panel)
+      dampedShort = shortSide > 800 ? (800 + (shortSide - 800) * 0.40) : shortSide;
+      densityMult = 0.94;
+    }
+
+    const baseFromShort = dampedShort * 0.01;
+    const baseFromLong = longSide * (layoutMode === 'ultrawide' ? 0.0045 : 0.0072);
+    let unit = Math.min(baseFromShort, Math.max(baseFromShort * 0.82, baseFromLong)) * densityMult * (cfg.scale / 100);
+
+    // Safety ceiling so transport controls never overflow smaller containers
+    const maxSafeUnit = Math.min(canvasH / 40, canvasW / (layoutMode === 'split-tb' || layoutMode === 'portrait' ? 54 : 82));
+    unit = Math.max(3.6, Math.min(unit, maxSafeUnit));
+
+    // Anchor Album Art / Flip Card size structurally to layout & canvas geometry (independent of Compact text density)
+    let cardSize = 320;
+    let heroMult = 6.4;
+    let artistMult = 3.9;
+    let albumMult = 2.8;
+
+    if (layoutMode === 'ultrawide') {
+      const maxH = canvasH - Math.max(44, unit * 9.5);
+      cardSize = Math.min(canvasH * 0.87, maxH, canvasW * 0.35);
+      heroMult = 7.0;
+      artistMult = 4.3;
+      albumMult = 3.0;
+    } else if (layoutMode === 'widescreen-16-9') {
+      const maxH = canvasH - Math.max(60, unit * 13);
+      cardSize = Math.min(canvasH * 0.75, maxH, canvasW * 0.42);
+      heroMult = 6.2;
+      artistMult = 3.8;
+      albumMult = 2.75;
+    } else if (layoutMode === 'widescreen-16-10') {
+      const maxH = canvasH - Math.max(64, unit * 14);
+      cardSize = Math.min(canvasH * 0.69, maxH, canvasW * 0.41);
+      heroMult = 6.0;
+      artistMult = 3.7;
+      albumMult = 2.7;
+    } else if (layoutMode === 'split-tb') {
+      // Reserve top header + full-width bottom progress/transport footer so card never collides
+      const bottomReserve = Math.max(125, unit * 34.5);
+      const availTopH = Math.max(150, canvasH - bottomReserve);
+      const widthFrac = subAspect === '4:3' ? 0.45 : 0.43;
+      cardSize = Math.min(availTopH, canvasW * widthFrac);
+      heroMult = 5.6;
+      artistMult = 3.5;
+      albumMult = 2.55;
+    } else {
+      // portrait
+      const availH = Math.max(140, canvasH - unit * 52);
+      cardSize = Math.min(availH, canvasW * 0.78);
+      heroMult = 5.6;
+      artistMult = 3.5;
+      albumMult = 2.55;
+    }
+
+    cardSize = Math.max(140, Math.round(cardSize));
+    const powerBtnSize = Math.round(Math.min(cardSize * 0.76, Math.min(canvasW, canvasH) * 0.48));
+    const navWidth = Math.round(Math.max(170, Math.min(canvasW * 0.34, unit * 26)));
+
+    const docEl = document.documentElement;
+    docEl.setAttribute('data-ma-layout', layoutMode);
+    docEl.setAttribute('data-ma-aspect', subAspect);
+    docEl.setAttribute('data-ma-density', cfg.density);
+    const isFramed = (cfg.fit === 'frame' || cfg.fit === 'exact') && cfg.aspect !== 'auto';
+    docEl.setAttribute('data-ma-fit', isFramed ? 'framed' : 'fill');
+
+    docEl.style.setProperty('--layout-unit', unit.toFixed(3) + 'px');
+    docEl.style.setProperty('--card-size', cardSize + 'px');
+    docEl.style.setProperty('--power-btn-size', powerBtnSize + 'px');
+    docEl.style.setProperty('--nav-width', navWidth + 'px');
+    docEl.style.setProperty('--font-hero', (unit * heroMult).toFixed(2) + 'px');
+    docEl.style.setProperty('--font-artist', (unit * artistMult).toFixed(2) + 'px');
+    docEl.style.setProperty('--font-album', (unit * albumMult).toFixed(2) + 'px');
+    docEl.style.setProperty('--ma-canvas-w', canvasW + 'px');
+    docEl.style.setProperty('--ma-canvas-h', canvasH + 'px');
+
+    const densityNames = { compact: 'Compact PC', standard: 'Standard', tenfoot: '10-Foot TV' };
+    lastResolvedLayoutSummary = layoutLabel + ' • ' + (densityNames[cfg.density] || cfg.density) + ' (' + cfg.scale + '%) • ' + canvasW + '×' + canvasH;
+    const summaryEl = document.getElementById('ma-plat-layout-summary');
+    if (summaryEl) {
+      summaryEl.textContent = 'Active: ' + lastResolvedLayoutSummary;
+    }
+
+    const sizeKey = canvasW + 'x' + canvasH + ':' + layoutMode;
+    if (sizeKey !== lastCanvasSizeKey) {
+      lastCanvasSizeKey = sizeKey;
+      requestAnimationFrame(function() {
+        isDispatchingSyntheticResize = true;
+        try {
+          window.dispatchEvent(new Event('resize'));
+        } finally {
+          isDispatchingSyntheticResize = false;
+        }
+      });
+    }
+  }
+
+  applyPlatformLayout();
+  window.addEventListener('resize', applyPlatformLayout);
+
   function mountPlatformUI() {
     if (document.getElementById('ma-platform-root')) return;
 
     const style = document.createElement('style');
     style.textContent = `
-      :root {
-        --layout-unit: min(1vmin, 0.42vw) !important;
-      }
       html, body {
         background-color: var(--bg-color, #12091c) !important;
       }
+
+      /* Framed / Exact Resolution Preview Canvas Mode */
+      html[data-ma-fit="framed"] body {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background-color: #06030a !important;
+      }
+      html[data-ma-fit="framed"] .widget-root {
+        width: var(--ma-canvas-w) !important;
+        height: var(--ma-canvas-h) !important;
+        flex: 0 0 auto !important;
+        border-radius: 12px;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.88), 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+
+      /* Shared bottom clearance so bottom-right Volume button never collides with Settings pill */
+      html[data-ma-layout] .player-screen {
+        padding-bottom: max(calc(var(--layout-unit) * 3.8), 46px) !important;
+      }
+
+      /* -------------------------------------------------------------------
+         1. ULTRAWIDE 32:9 LAYOUT (Xeneon Edge)
+         ------------------------------------------------------------------- */
+      html[data-ma-layout="ultrawide"] .player-screen {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+      }
+      html[data-ma-layout="ultrawide"] .player-details-column {
+        height: 100% !important;
+      }
+
+      /* -------------------------------------------------------------------
+         2. WIDESCREEN 16:9 & 16:10 LAYOUTS
+         ------------------------------------------------------------------- */
+      html[data-ma-layout="widescreen-16-9"] .standby-default-bg,
+      html[data-ma-layout="widescreen-16-10"] .standby-default-bg {
+        background-position: 60% center !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .standby-power-zone,
+      html[data-ma-layout="widescreen-16-10"] .standby-power-zone {
+        left: 27% !important;
+        top: 50% !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .player-screen,
+      html[data-ma-layout="widescreen-16-10"] .player-screen {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding-top: calc(var(--layout-unit) * 7.5) !important;
+        padding-left: calc(var(--layout-unit) * 5.2) !important;
+        padding-right: calc(var(--layout-unit) * 5.2) !important;
+        gap: calc(var(--layout-unit) * 5.2) !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .media-card-column,
+      html[data-ma-layout="widescreen-16-10"] .media-card-column {
+        margin-left: 0 !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-10"] .left-nav-drawer,
+      html[data-ma-layout="split-tb"] .left-nav-drawer,
+      html[data-ma-layout="portrait"] .left-nav-drawer {
+        position: absolute !important;
+        top: calc(var(--layout-unit) * 9.8) !important;
+        left: var(--space-md) !important;
+        z-index: 29 !important;
+        background: rgba(16, 11, 26, 0.94) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+        border-radius: var(--radius-card) !important;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.68) !important;
+        padding: 0 !important;
+        pointer-events: none !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .player-screen.nav-open .left-nav-drawer,
+      html[data-ma-layout="widescreen-16-10"] .player-screen.nav-open .left-nav-drawer,
+      html[data-ma-layout="split-tb"] .player-screen.nav-open .left-nav-drawer,
+      html[data-ma-layout="portrait"] .player-screen.nav-open .left-nav-drawer {
+        width: var(--nav-width) !important;
+        padding: var(--space-sm) !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .player-details-column,
+      html[data-ma-layout="widescreen-16-10"] .player-details-column {
+        height: min(100%, max(var(--card-size), 76%)) !important;
+        padding: calc(var(--layout-unit) * 1.0) calc(var(--layout-unit) * 1.5) !important;
+        justify-content: space-between !important;
+        gap: calc(var(--layout-unit) * 1.6) !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .track-metadata-block,
+      html[data-ma-layout="widescreen-16-10"] .track-metadata-block {
+        padding-right: calc(var(--layout-unit) * 2.0) !important;
+        align-items: flex-start !important;
+        text-align: left !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .track-title,
+      html[data-ma-layout="widescreen-16-10"] .track-title,
+      html[data-ma-layout="split-tb"] .track-title {
+        white-space: normal !important;
+        display: -webkit-box !important;
+        -webkit-line-clamp: 2 !important;
+        -webkit-box-orient: vertical !important;
+      }
+      html[data-ma-layout="widescreen-16-9"] .lyrics-stage,
+      html[data-ma-layout="widescreen-16-10"] .lyrics-stage {
+        position: relative !important;
+        inset: auto !important;
+        top: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        right: auto !important;
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        width: 100% !important;
+        display: flex !important;
+      }
+
+      /* -------------------------------------------------------------------
+         3. 4:3 & 3:2 TOP / BOTTOM SPLIT LAYOUT (split-tb)
+            Top: [Album Art / Flip Card] | [Metadata + 5-Line Lyrics]
+            Bottom: [Full-Width Seek Bar + 7-Button Transport Footer]
+         ------------------------------------------------------------------- */
+      html[data-ma-layout="split-tb"] .standby-default-bg {
+        background-position: 63% center !important;
+      }
+      html[data-ma-layout="split-tb"] .standby-power-zone {
+        left: 29% !important;
+        top: 50% !important;
+      }
+      html[data-ma-layout="split-tb"] .player-screen {
+        display: grid !important;
+        grid-template-columns: auto minmax(0, 1fr) !important;
+        grid-template-rows: auto minmax(0, 1fr) auto !important;
+        align-items: stretch !important;
+        column-gap: calc(var(--layout-unit) * 4.2) !important;
+        row-gap: calc(var(--layout-unit) * 1.8) !important;
+        padding-top: calc(var(--layout-unit) * 8.6) !important;
+        padding-left: calc(var(--layout-unit) * 4.4) !important;
+        padding-right: calc(var(--layout-unit) * 4.4) !important;
+      }
+      html[data-ma-layout="split-tb"] .media-card-column {
+        grid-column: 1 !important;
+        grid-row: 1 / 3 !important;
+        align-self: center !important;
+        margin-left: 0 !important;
+      }
+      html[data-ma-layout="split-tb"] .player-details-column {
+        display: contents !important;
+      }
+      html[data-ma-layout="split-tb"] .track-metadata-block {
+        grid-column: 2 !important;
+        grid-row: 1 !important;
+        align-self: start !important;
+        align-items: flex-start !important;
+        text-align: left !important;
+        padding-top: calc(var(--layout-unit) * 0.8) !important;
+        padding-right: calc(var(--layout-unit) * 1.5) !important;
+      }
+      html[data-ma-layout="split-tb"] .track-quick-actions {
+        justify-content: flex-start !important;
+      }
+      html[data-ma-layout="split-tb"] .lyrics-stage {
+        grid-column: 2 !important;
+        grid-row: 2 !important;
+        position: relative !important;
+        inset: auto !important;
+        top: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        right: auto !important;
+        width: 100% !important;
+        min-height: 0 !important;
+        align-self: center !important;
+        display: flex !important;
+        z-index: auto !important;
+        isolation: auto !important;
+      }
+      html[data-ma-layout="split-tb"] .lyric-line {
+        font-size: calc(var(--font-artist) * 1.02) !important;
+        min-height: calc(var(--layout-unit) * 4.8) !important;
+      }
+      html[data-ma-layout="split-tb"] .player-bottom-controls {
+        grid-column: 1 / -1 !important;
+        grid-row: 3 !important;
+        width: 100% !important;
+        padding: calc(var(--layout-unit) * 0.6) calc(var(--layout-unit) * 0.8) 0 !important;
+        gap: calc(var(--layout-unit) * 1.8) !important;
+      }
+      html[data-ma-layout="split-tb"] .volume-popup-pill {
+        right: calc(var(--layout-unit) * 5.2) !important;
+        top: auto !important;
+        bottom: max(calc(var(--layout-unit) * 18.5), 140px) !important;
+        height: min(44vh, calc(var(--layout-unit) * 38)) !important;
+      }
+
+      /* -------------------------------------------------------------------
+         4. PORTRAIT STACK LAYOUT (Custom W < H or Vertical Mobile)
+         ------------------------------------------------------------------- */
+      html[data-ma-layout="portrait"] .standby-power-zone {
+        left: 50% !important;
+        top: 42% !important;
+      }
+      html[data-ma-layout="portrait"] .standby-custom-logo {
+        right: 50% !important;
+        top: 78% !important;
+        transform: translate(50%, -50%) !important;
+      }
+      html[data-ma-layout="portrait"] .player-screen {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding-top: calc(var(--layout-unit) * 9.5) !important;
+        padding-left: var(--space-md) !important;
+        padding-right: var(--space-md) !important;
+        gap: var(--space-sm) !important;
+      }
+      html[data-ma-layout="portrait"] .media-card-column {
+        margin-left: 0 !important;
+      }
+      html[data-ma-layout="portrait"] .player-details-column {
+        width: 100% !important;
+        flex: 1 1 auto !important;
+        padding: 0 var(--space-xs) !important;
+        justify-content: space-between !important;
+        gap: var(--space-sm) !important;
+      }
+      html[data-ma-layout="portrait"] .track-metadata-block {
+        align-items: center !important;
+        text-align: center !important;
+        padding-right: 0 !important;
+      }
+      html[data-ma-layout="portrait"] .track-quick-actions {
+        justify-content: center !important;
+      }
+      html[data-ma-layout="portrait"] .lyrics-stage {
+        position: relative !important;
+        inset: auto !important;
+        top: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        right: auto !important;
+        width: 100% !important;
+        flex: 1 1 auto !important;
+        display: none !important;
+      }
+      html[data-ma-layout="portrait"] .lyrics-stage.is-open {
+        display: flex !important;
+      }
+
       #ma-platform-root {
         position: fixed;
         z-index: 9000;
@@ -872,7 +1337,8 @@ BRIDGE_JS_TEMPLATE = r"""
         min-height: 16px;
       }
     `;
-    document.head.appendChild(style);
+    document.body.appendChild(style);
+    applyPlatformLayout();
 
     const root = document.createElement('div');
     root.id = 'ma-platform-root';
@@ -1056,6 +1522,106 @@ BRIDGE_JS_TEMPLATE = r"""
         const url = new URL(window.location.href);
         url.searchParams.set('profile', slug);
         window.location.href = url.toString();
+      });
+
+      // Per-Profile Display Layout & Density Group (Web / Home Assistant Only)
+      const layoutCfg = getLayoutConfig();
+      const layoutGroup = document.createElement('div');
+      layoutGroup.className = 'ma-plat-group';
+      layoutGroup.innerHTML = `
+        <div class="ma-plat-group-title">Display Layout &amp; Density</div>
+        <div class="ma-plat-field">
+          <label class="ma-plat-label">Target Aspect Ratio / Layout</label>
+          <select class="ma-plat-select" id="ma-plat-layout-aspect">
+            <option value="auto" ${layoutCfg.aspect === 'auto' ? 'selected' : ''}>Auto (Match Window)</option>
+            <option value="32:9" ${layoutCfg.aspect === '32:9' ? 'selected' : ''}>32:9 Ultrawide (Xeneon Edge)</option>
+            <option value="16:9" ${layoutCfg.aspect === '16:9' ? 'selected' : ''}>16:9 Widescreen</option>
+            <option value="16:10" ${layoutCfg.aspect === '16:10' ? 'selected' : ''}>16:10 Widescreen</option>
+            <option value="3:2" ${layoutCfg.aspect === '3:2' ? 'selected' : ''}>3:2 (Top / Bottom Split)</option>
+            <option value="4:3" ${layoutCfg.aspect === '4:3' ? 'selected' : ''}>4:3 (Top / Bottom Split)</option>
+            <option value="custom" ${layoutCfg.aspect === 'custom' ? 'selected' : ''}>Custom Resolution (W × H)</option>
+          </select>
+        </div>
+        <div class="ma-plat-field" id="ma-plat-custom-res-row" style="display:${layoutCfg.aspect === 'custom' ? 'flex' : 'none'};">
+          <label class="ma-plat-label">Custom Resolution (Width × Height px)</label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="number" class="ma-plat-input" id="ma-plat-custom-w" min="240" max="7680" step="1" value="${layoutCfg.customW}" placeholder="Width (px)" />
+            <span style="opacity:0.65;font-weight:700;">×</span>
+            <input type="number" class="ma-plat-input" id="ma-plat-custom-h" min="240" max="4320" step="1" value="${layoutCfg.customH}" placeholder="Height (px)" />
+          </div>
+        </div>
+        <div class="ma-plat-field">
+          <label class="ma-plat-label">Canvas Fit</label>
+          <select class="ma-plat-select" id="ma-plat-layout-fit">
+            <option value="fill" ${layoutCfg.fit === 'fill' ? 'selected' : ''}>Fill Window (Edge-to-Edge)</option>
+            <option value="frame" ${layoutCfg.fit === 'frame' ? 'selected' : ''}>Lock Aspect Ratio Frame (Letterbox Preview)</option>
+            <option value="exact" ${layoutCfg.fit === 'exact' ? 'selected' : ''}>Exact Target Pixels (1:1 Preview)</option>
+          </select>
+        </div>
+        <div class="ma-plat-field">
+          <label class="ma-plat-label">Display Density</label>
+          <select class="ma-plat-select" id="ma-plat-layout-density">
+            <option value="compact" ${layoutCfg.density === 'compact' ? 'selected' : ''}>Compact — PC / 4K Desktop Monitor</option>
+            <option value="standard" ${layoutCfg.density === 'standard' ? 'selected' : ''}>Standard — Tablet / Touch Panel</option>
+            <option value="tenfoot" ${layoutCfg.density === 'tenfoot' ? 'selected' : ''}>10-Foot — Living Room TV</option>
+          </select>
+        </div>
+        <div class="ma-plat-field">
+          <label class="ma-plat-label">
+            <span>Fine-Tune UI Scale</span>
+            <span class="ma-plat-val" id="ma-plat-layout-scale-val">${layoutCfg.scale}%</span>
+          </label>
+          <input type="range" class="ma-plat-slider" id="ma-plat-layout-scale" min="50" max="150" step="5" value="${layoutCfg.scale}" />
+        </div>
+        <div class="ma-plat-group-desc" id="ma-plat-layout-summary">Active: ${lastResolvedLayoutSummary}</div>
+      `;
+      body.appendChild(layoutGroup);
+
+      const aspectSel = layoutGroup.querySelector('#ma-plat-layout-aspect');
+      const customRow = layoutGroup.querySelector('#ma-plat-custom-res-row');
+      const customWIn = layoutGroup.querySelector('#ma-plat-custom-w');
+      const customHIn = layoutGroup.querySelector('#ma-plat-custom-h');
+      const fitSel = layoutGroup.querySelector('#ma-plat-layout-fit');
+      const densitySel = layoutGroup.querySelector('#ma-plat-layout-density');
+      const scaleIn = layoutGroup.querySelector('#ma-plat-layout-scale');
+      const scaleValEl = layoutGroup.querySelector('#ma-plat-layout-scale-val');
+
+      aspectSel.addEventListener('change', function(e) {
+        effectiveValues._layoutAspect = e.target.value;
+        customRow.style.display = e.target.value === 'custom' ? 'flex' : 'none';
+        applyPlatformLayout();
+        queueProfileSave();
+      });
+
+      function onCustomResChange() {
+        const w = Math.max(240, Math.min(7680, Math.round(Number(customWIn.value) || 1920)));
+        const h = Math.max(240, Math.min(4320, Math.round(Number(customHIn.value) || 1080)));
+        effectiveValues._layoutCustomWidth = w;
+        effectiveValues._layoutCustomHeight = h;
+        applyPlatformLayout();
+        queueProfileSave();
+      }
+      customWIn.addEventListener('input', onCustomResChange);
+      customHIn.addEventListener('input', onCustomResChange);
+
+      fitSel.addEventListener('change', function(e) {
+        effectiveValues._layoutCanvasFit = e.target.value;
+        applyPlatformLayout();
+        queueProfileSave();
+      });
+
+      densitySel.addEventListener('change', function(e) {
+        effectiveValues._layoutDensity = e.target.value;
+        applyPlatformLayout();
+        queueProfileSave();
+      });
+
+      scaleIn.addEventListener('input', function(e) {
+        const num = Number(e.target.value) || 100;
+        scaleValEl.textContent = num + '%';
+        effectiveValues._layoutScale = num;
+        applyPlatformLayout();
+        queueProfileSave();
       });
 
       (widgetSchema.groups || []).forEach(function(grp) {
@@ -1862,7 +2428,8 @@ class WidgetRequestHandler(BaseHTTPRequestHandler):
             if widget_folder not in widgets:
                 self._send_json({"error": f"Unknown widget: {widget_folder}"}, status=404)
                 return
-            schema_defaults = {k: v["default"] for k, v in widgets[widget_folder]["properties"].items()}
+            schema_defaults = dict(PLATFORM_LAYOUT_DEFAULTS)
+            schema_defaults.update({k: v["default"] for k, v in widgets[widget_folder]["properties"].items()})
             existing = STORE.data["profiles"][widget_folder].get(profile_id, {})
             merged_values = dict(schema_defaults)
             merged_values.update(existing.get("values", {}))
